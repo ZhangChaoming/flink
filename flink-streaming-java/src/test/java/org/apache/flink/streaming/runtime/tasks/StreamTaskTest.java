@@ -24,9 +24,9 @@ import org.apache.flink.api.common.state.CheckpointListener;
 import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.api.common.typeutils.base.StringSerializer;
-import org.apache.flink.configuration.CheckpointingOptions;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.configuration.ReadableConfig;
+import org.apache.flink.configuration.StateBackendOptions;
 import org.apache.flink.core.fs.FSDataInputStream;
 import org.apache.flink.core.io.InputStatus;
 import org.apache.flink.core.testutils.OneShotLatch;
@@ -35,6 +35,7 @@ import org.apache.flink.runtime.checkpoint.CheckpointMetaData;
 import org.apache.flink.runtime.checkpoint.CheckpointMetrics;
 import org.apache.flink.runtime.checkpoint.CheckpointMetricsBuilder;
 import org.apache.flink.runtime.checkpoint.CheckpointOptions;
+import org.apache.flink.runtime.checkpoint.CheckpointType;
 import org.apache.flink.runtime.checkpoint.OperatorSubtaskState;
 import org.apache.flink.runtime.checkpoint.SubtaskState;
 import org.apache.flink.runtime.checkpoint.TaskStateSnapshot;
@@ -65,6 +66,8 @@ import org.apache.flink.runtime.state.AbstractStateBackend;
 import org.apache.flink.runtime.state.CheckpointStreamFactory;
 import org.apache.flink.runtime.state.CheckpointableKeyedStateBackend;
 import org.apache.flink.runtime.state.DoneFuture;
+import org.apache.flink.runtime.state.FunctionInitializationContext;
+import org.apache.flink.runtime.state.FunctionSnapshotContext;
 import org.apache.flink.runtime.state.KeyGroupRange;
 import org.apache.flink.runtime.state.KeyGroupStatePartitionStreamProvider;
 import org.apache.flink.runtime.state.KeyedStateHandle;
@@ -89,6 +92,8 @@ import org.apache.flink.runtime.taskmanager.TaskManagerActions;
 import org.apache.flink.runtime.taskmanager.TestTaskBuilder;
 import org.apache.flink.runtime.util.FatalExitExceptionHandler;
 import org.apache.flink.streaming.api.TimeCharacteristic;
+import org.apache.flink.streaming.api.checkpoint.CheckpointedFunction;
+import org.apache.flink.streaming.api.functions.source.RichParallelSourceFunction;
 import org.apache.flink.streaming.api.functions.source.SourceFunction;
 import org.apache.flink.streaming.api.graph.StreamConfig;
 import org.apache.flink.streaming.api.operators.AbstractStreamOperator;
@@ -155,7 +160,6 @@ import java.util.function.Consumer;
 import static java.util.Arrays.asList;
 import static org.apache.flink.api.common.typeinfo.BasicTypeInfo.STRING_TYPE_INFO;
 import static org.apache.flink.runtime.checkpoint.CheckpointFailureReason.UNKNOWN_TASK_CHECKPOINT_NOTIFICATION_FAILURE;
-import static org.apache.flink.runtime.checkpoint.CheckpointType.SYNC_SAVEPOINT;
 import static org.apache.flink.runtime.checkpoint.StateObjectCollection.singleton;
 import static org.apache.flink.runtime.state.CheckpointStorageLocationReference.getDefault;
 import static org.apache.flink.streaming.runtime.tasks.mailbox.TaskMailbox.MAX_PRIORITY;
@@ -189,24 +193,53 @@ public class StreamTaskTest extends TestLogger {
     @Rule public final Timeout timeoutPerTest = Timeout.seconds(30);
 
     @Test
-    public void testSyncSavepointCompleted() throws Exception {
-        testSyncSavepointWithEndInput(StreamTask::notifyCheckpointCompleteAsync, false);
+    public void testSavepointSuspendCompleted() throws Exception {
+        testSyncSavepointWithEndInput(
+                StreamTask::notifyCheckpointCompleteAsync, CheckpointType.SAVEPOINT_SUSPEND, false);
     }
 
     @Test
-    public void testSyncSavepointAborted() throws Exception {
+    public void testSavepointTerminateCompleted() throws Exception {
+        testSyncSavepointWithEndInput(
+                StreamTask::notifyCheckpointCompleteAsync,
+                CheckpointType.SAVEPOINT_TERMINATE,
+                true);
+    }
+
+    @Test
+    public void testSavepointSuspendedAborted() throws Exception {
         testSyncSavepointWithEndInput(
                 (task, id) ->
                         task.abortCheckpointOnBarrier(
                                 id,
                                 new CheckpointException(
                                         UNKNOWN_TASK_CHECKPOINT_NOTIFICATION_FAILURE)),
+                CheckpointType.SAVEPOINT_SUSPEND,
                 true);
     }
 
     @Test
-    public void testSyncSavepointAbortedAsync() throws Exception {
-        testSyncSavepointWithEndInput(StreamTask::notifyCheckpointAbortAsync, true);
+    public void testSavepointTerminateAborted() throws Exception {
+        testSyncSavepointWithEndInput(
+                (task, id) ->
+                        task.abortCheckpointOnBarrier(
+                                id,
+                                new CheckpointException(
+                                        UNKNOWN_TASK_CHECKPOINT_NOTIFICATION_FAILURE)),
+                CheckpointType.SAVEPOINT_TERMINATE,
+                true);
+    }
+
+    @Test
+    public void testSavepointSuspendAbortedAsync() throws Exception {
+        testSyncSavepointWithEndInput(
+                StreamTask::notifyCheckpointAbortAsync, CheckpointType.SAVEPOINT_SUSPEND, true);
+    }
+
+    @Test
+    public void testSavepointTerminateAbortedAsync() throws Exception {
+        testSyncSavepointWithEndInput(
+                StreamTask::notifyCheckpointAbortAsync, CheckpointType.SAVEPOINT_TERMINATE, true);
     }
 
     /**
@@ -221,6 +254,7 @@ public class StreamTaskTest extends TestLogger {
      */
     private void testSyncSavepointWithEndInput(
             BiConsumerWithException<StreamTask<?, ?>, Long, IOException> savepointResult,
+            CheckpointType checkpointType,
             boolean expectEndInput)
             throws Exception {
         StreamTaskMailboxTestHarness<String> harness =
@@ -241,7 +275,7 @@ public class StreamTaskTest extends TestLogger {
                     try {
                         harness.streamTask.triggerCheckpointOnBarrier(
                                 new CheckpointMetaData(checkpointId, checkpointId),
-                                new CheckpointOptions(SYNC_SAVEPOINT, getDefault()),
+                                new CheckpointOptions(checkpointType, getDefault()),
                                 new CheckpointMetricsBuilder());
                     } catch (IOException e) {
                         fail(e.getMessage());
@@ -382,8 +416,7 @@ public class StreamTaskTest extends TestLogger {
                             .build();
 
             final TaskExecutionState state =
-                    new TaskExecutionState(
-                            task.getJobID(), task.getExecutionId(), ExecutionState.RUNNING);
+                    new TaskExecutionState(task.getExecutionId(), ExecutionState.RUNNING);
 
             task.startTaskThread();
 
@@ -404,7 +437,7 @@ public class StreamTaskTest extends TestLogger {
     public void testStateBackendLoadingAndClosing() throws Exception {
         Configuration taskManagerConfig = new Configuration();
         taskManagerConfig.setString(
-                CheckpointingOptions.STATE_BACKEND, TestMemoryStateBackendFactory.class.getName());
+                StateBackendOptions.STATE_BACKEND, TestMemoryStateBackendFactory.class.getName());
 
         StreamConfig cfg = new StreamConfig(new Configuration());
         cfg.setStateKeySerializer(mock(TypeSerializer.class));
@@ -445,7 +478,7 @@ public class StreamTaskTest extends TestLogger {
     public void testStateBackendClosingOnFailure() throws Exception {
         Configuration taskManagerConfig = new Configuration();
         taskManagerConfig.setString(
-                CheckpointingOptions.STATE_BACKEND, TestMemoryStateBackendFactory.class.getName());
+                StateBackendOptions.STATE_BACKEND, TestMemoryStateBackendFactory.class.getName());
 
         StreamConfig cfg = new StreamConfig(new Configuration());
         cfg.setStateKeySerializer(mock(TypeSerializer.class));
@@ -668,8 +701,7 @@ public class StreamTaskTest extends TestLogger {
 
         streamTask.triggerCheckpointAsync(
                 new CheckpointMetaData(42L, 1L),
-                CheckpointOptions.forCheckpointWithDefaultLocation(),
-                false);
+                CheckpointOptions.forCheckpointWithDefaultLocation());
 
         try {
             task.waitForTaskCompletion(false);
@@ -720,8 +752,7 @@ public class StreamTaskTest extends TestLogger {
 
         streamTask.triggerCheckpointAsync(
                 new CheckpointMetaData(42L, 1L),
-                CheckpointOptions.forCheckpointWithDefaultLocation(),
-                false);
+                CheckpointOptions.forCheckpointWithDefaultLocation());
 
         final Throwable uncaughtException = uncaughtExceptionHandler.waitForUncaughtException();
         assertThat(uncaughtException, is(failingCause));
@@ -771,8 +802,7 @@ public class StreamTaskTest extends TestLogger {
             streamTask
                     .triggerCheckpointAsync(
                             new CheckpointMetaData(42L, 1L),
-                            CheckpointOptions.forCheckpointWithDefaultLocation(),
-                            false)
+                            CheckpointOptions.forCheckpointWithDefaultLocation())
                     .get();
 
             // wait for the completion of the async task
@@ -887,8 +917,7 @@ public class StreamTaskTest extends TestLogger {
             final long checkpointId = 42L;
             streamTask.triggerCheckpointAsync(
                     new CheckpointMetaData(checkpointId, 1L),
-                    CheckpointOptions.forCheckpointWithDefaultLocation(),
-                    false);
+                    CheckpointOptions.forCheckpointWithDefaultLocation());
 
             acknowledgeCheckpointLatch.await();
 
@@ -977,8 +1006,7 @@ public class StreamTaskTest extends TestLogger {
         final long checkpointId = 42L;
         task.streamTask.triggerCheckpointAsync(
                 new CheckpointMetaData(checkpointId, 1L),
-                CheckpointOptions.forCheckpointWithDefaultLocation(),
-                false);
+                CheckpointOptions.forCheckpointWithDefaultLocation());
 
         rawKeyedStateHandleFuture.awaitRun();
 
@@ -1063,8 +1091,7 @@ public class StreamTaskTest extends TestLogger {
 
             task.streamTask.triggerCheckpointAsync(
                     new CheckpointMetaData(42L, 1L),
-                    CheckpointOptions.forCheckpointWithDefaultLocation(),
-                    false);
+                    CheckpointOptions.forCheckpointWithDefaultLocation());
 
             checkpointCompletedLatch.await(30, TimeUnit.SECONDS);
 
@@ -1505,6 +1532,93 @@ public class StreamTaskTest extends TestLogger {
         }
     }
 
+    @Test
+    public void testRestorePerformedOnlyOnce() throws Exception {
+        // given: the operator with empty snapshot result (all state handles are null)
+        OneInputStreamOperator<String, String> statelessOperator =
+                streamOperatorWithSnapshot(new OperatorSnapshotFutures());
+        DummyEnvironment dummyEnvironment = new DummyEnvironment();
+
+        // when: Invoke the restore explicitly before launching the task.
+        RunningTask<MockStreamTask> task =
+                runTask(
+                        () -> {
+                            MockStreamTask mockStreamTask =
+                                    createMockStreamTask(
+                                            dummyEnvironment, operatorChain(statelessOperator));
+
+                            mockStreamTask.restore();
+
+                            return mockStreamTask;
+                        });
+        waitTaskIsRunning(task.streamTask, task.invocationFuture);
+
+        task.streamTask.cancel();
+
+        // then: 'restore' was called only once.
+        assertThat(task.streamTask.restoreInvocationCount, is(1));
+    }
+
+    @Test
+    public void testRestorePerformedFromInvoke() throws Exception {
+        // given: the operator with empty snapshot result (all state handles are null)
+        OneInputStreamOperator<String, String> statelessOperator =
+                streamOperatorWithSnapshot(new OperatorSnapshotFutures());
+        DummyEnvironment dummyEnvironment = new DummyEnvironment();
+
+        // when: Launch the task.
+        RunningTask<MockStreamTask> task =
+                runTask(
+                        () ->
+                                createMockStreamTask(
+                                        dummyEnvironment, operatorChain(statelessOperator)));
+
+        waitTaskIsRunning(task.streamTask, task.invocationFuture);
+
+        task.streamTask.cancel();
+
+        // then: 'restore' was called even without explicit 'restore' invocation.
+        assertThat(task.streamTask.restoreInvocationCount, is(1));
+    }
+
+    @Test
+    public void testTaskAvoidHangingAfterSnapshotStateThrownException() throws Exception {
+        // given: Configured SourceStreamTask with source which fails on checkpoint.
+        Configuration taskManagerConfig = new Configuration();
+        taskManagerConfig.setString(
+                StateBackendOptions.STATE_BACKEND, TestMemoryStateBackendFactory.class.getName());
+
+        StreamConfig cfg = new StreamConfig(new Configuration());
+        cfg.setStateKeySerializer(mock(TypeSerializer.class));
+        cfg.setOperatorID(new OperatorID(4712L, 43L));
+
+        FailedSource failedSource = new FailedSource();
+        cfg.setStreamOperator(new TestStreamSource<String, FailedSource>(failedSource));
+        cfg.setTimeCharacteristic(TimeCharacteristic.ProcessingTime);
+
+        try (NettyShuffleEnvironment shuffleEnvironment =
+                new NettyShuffleEnvironmentBuilder().build()) {
+            Task task =
+                    createTask(SourceStreamTask.class, shuffleEnvironment, cfg, taskManagerConfig);
+
+            // when: Task starts
+            task.startTaskThread();
+
+            // wait for the task starts doing the work.
+            failedSource.awaitRunning();
+
+            // and: Checkpoint is triggered which should lead to exception in Source.
+            task.triggerCheckpointBarrier(
+                    42L, 1L, CheckpointOptions.forCheckpointWithDefaultLocation());
+
+            // wait for clean termination.
+            task.getExecutingThread().join();
+
+            // then: The task doesn't hang but finished with FAILED state.
+            assertEquals(ExecutionState.FAILED, task.getExecutionState());
+        }
+    }
+
     private MockEnvironment setupEnvironment(boolean... outputAvailabilities) {
         final Configuration configuration = new Configuration();
         new MockStreamConfig(configuration, outputAvailabilities.length);
@@ -1654,7 +1768,8 @@ public class StreamTaskTest extends TestLogger {
 
         @Override
         public CompletableFuture<Void> prepareSnapshot(
-                ChannelStateWriter channelStateWriter, final long checkpointId) {
+                ChannelStateWriter channelStateWriter, final long checkpointId)
+                throws CheckpointException {
             return FutureUtils.completedVoidFuture();
         }
 
@@ -1683,7 +1798,8 @@ public class StreamTaskTest extends TestLogger {
 
         @Override
         public CompletableFuture<Void> prepareSnapshot(
-                ChannelStateWriter channelStateWriter, final long checkpointId) {
+                ChannelStateWriter channelStateWriter, final long checkpointId)
+                throws CheckpointException {
             return FutureUtils.completedVoidFuture();
         }
 
@@ -1818,6 +1934,7 @@ public class StreamTaskTest extends TestLogger {
     private static class MockStreamTask extends StreamTask<String, AbstractStreamOperator<String>> {
 
         private final OperatorChain<String, AbstractStreamOperator<String>> overrideOperatorChain;
+        private int restoreInvocationCount = 0;
 
         MockStreamTask(
                 Environment env,
@@ -1826,6 +1943,12 @@ public class StreamTaskTest extends TestLogger {
                 throws Exception {
             super(env, null, uncaughtExceptionHandler);
             this.overrideOperatorChain = operatorChain;
+        }
+
+        @Override
+        public void restore() throws Exception {
+            super.restore();
+            restoreInvocationCount++;
         }
 
         @Override
@@ -1865,7 +1988,8 @@ public class StreamTaskTest extends TestLogger {
 
         @Override
         public CompletableFuture<Void> prepareSnapshot(
-                ChannelStateWriter channelStateWriter, long checkpointId) {
+                ChannelStateWriter channelStateWriter, long checkpointId)
+                throws CheckpointException {
             return FutureUtils.completedVoidFuture();
         }
 
@@ -2335,6 +2459,53 @@ public class StreamTaskTest extends TestLogger {
         @Override
         public void notifyCheckpointComplete(long checkpointId) {
             throw new ExpectedTestException();
+        }
+    }
+
+    private static class FailedSource extends RichParallelSourceFunction<String>
+            implements CheckpointedFunction {
+        private static CountDownLatch runningLatch = null;
+
+        private volatile boolean running;
+
+        public FailedSource() {
+            runningLatch = new CountDownLatch(1);
+        }
+
+        @Override
+        public void open(Configuration parameters) throws Exception {
+            running = true;
+        }
+
+        @Override
+        public void run(SourceContext<String> ctx) throws Exception {
+            runningLatch.countDown();
+            while (running) {
+                try {
+                    Thread.sleep(Integer.MAX_VALUE);
+                } catch (InterruptedException ignore) {
+                    // ignore
+                }
+            }
+        }
+
+        @Override
+        public void cancel() {
+            running = false;
+        }
+
+        @Override
+        public void snapshotState(FunctionSnapshotContext context) throws Exception {
+            if (runningLatch.getCount() == 0) {
+                throw new RuntimeException("source failed");
+            }
+        }
+
+        @Override
+        public void initializeState(FunctionInitializationContext context) throws Exception {}
+
+        public void awaitRunning() throws InterruptedException {
+            runningLatch.await();
         }
     }
 }

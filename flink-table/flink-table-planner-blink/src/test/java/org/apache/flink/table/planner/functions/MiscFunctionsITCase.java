@@ -79,9 +79,12 @@ public class MiscFunctionsITCase extends BuiltInFunctionTestBase {
                                 "IFNULL(f1, f0)",
                                 new BigDecimal("123.45"),
                                 DataTypes.DECIMAL(12, 2).notNull())
-                        .testSqlResult(
-                                "TakesNotNull(IFNULL(f0, 12))", 12, DataTypes.INT().notNull()),
-                TestSpec.forFunction(BuiltInFunctionDefinitions.CALL_SQL)
+                        .testResult(
+                                call("TakesNotNull", $("f0").ifNull(12)),
+                                "TakesNotNull(IFNULL(f0, 12))",
+                                12,
+                                DataTypes.INT().notNull()),
+                TestSpec.forExpression("SQL call")
                         .onFieldsWithData(null, 12, "Hello World")
                         .andDataTypes(
                                 DataTypes.INT().nullable(),
@@ -95,10 +98,7 @@ public class MiscFunctionsITCase extends BuiltInFunctionTestBase {
                                 "ELLO WORLDhello worl",
                                 DataTypes.STRING().notNull())
                         .testTableApiError(
-                                callSql("UPPER(f1)"), "Invalid SQL expression: UPPER(f1)")
-                        .testTableApiError(
-                                call("CALLSQL", $("f2")),
-                                "SQL expression must be a string literal."));
+                                callSql("UPPER(f1)"), "Invalid SQL expression: UPPER(f1)"));
     }
 
     // --------------------------------------------------------------------------------------------

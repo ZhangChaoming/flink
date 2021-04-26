@@ -84,7 +84,13 @@ public interface ResolverRule {
         /** Access to available local references. */
         Optional<LocalReferenceExpression> getLocalReference(String alias);
 
+        /** Access to available local references. */
+        List<LocalReferenceExpression> getLocalReferences();
+
         /** Access to available local over windows. */
         Optional<LocalOverWindow> getOverWindow(Expression alias);
+
+        /** Whether the expression is evaluated for a grouped aggregation. */
+        boolean isGroupedAggregation();
     }
 }

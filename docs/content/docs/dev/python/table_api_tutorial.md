@@ -51,7 +51,7 @@ In particular, Apache Flink's [user mailing list](https://flink.apache.org/commu
 If you want to follow along, you will require a computer with: 
 
 * Java 8 or 11
-* Python 3.5, 3.6 or 3.7
+* Python 3.6, 3.7 or 3.8
 
 Using Python Table API requires installing PyFlink, which is available on [PyPI](https://pypi.org/project/apache-flink/) and can be easily installed using `pip`. 
 
@@ -63,21 +63,21 @@ Once PyFlink is installed, you can move on to write a Python Table API job.
 
 ## Writing a Flink Python Table API Program
 
-Table API applications begin by declaring a table environment; either a `BatchTableEvironment` for batch applications or `StreamTableEnvironment` for streaming applications.
+Table API applications begin by declaring a table environment.
 This serves as the main entry point for interacting with the Flink runtime.
 It can be used for setting execution parameters such as restart strategy, default parallelism, etc.
 The table config allows setting Table API specific configurations.
 
 ```python
-exec_env = ExecutionEnvironment.get_execution_environment()
-exec_env.set_parallelism(1)
-t_config = TableConfig()
-t_env = BatchTableEnvironment.create(exec_env, t_config)
+settings = EnvironmentSettings.new_instance().in_batch_mode().use_blink_planner().build()
+t_env = TableEnvironment.create(settings)
 ```
 
 The table environment created, you can declare source and sink tables.
 
 ```python
+# write all the data to one file
+t_env.get_config().get_configuration().set_string("parallelism.default", "1")
 t_env.connect(FileSystem().path('/tmp/input')) \
     .with_format(OldCsv()
                  .field('word', DataTypes.STRING())) \
@@ -143,16 +143,15 @@ tab.group_by(tab.word) \
 The complete code so far:
 
 ```python
-from pyflink.dataset import ExecutionEnvironment
-from pyflink.table import TableConfig, DataTypes, BatchTableEnvironment
+from pyflink.table import DataTypes, TableEnvironment, EnvironmentSettings
 from pyflink.table.descriptors import Schema, OldCsv, FileSystem
 from pyflink.table.expressions import lit
 
-exec_env = ExecutionEnvironment.get_execution_environment()
-exec_env.set_parallelism(1)
-t_config = TableConfig()
-t_env = BatchTableEnvironment.create(exec_env, t_config)
+settings = EnvironmentSettings.new_instance().in_batch_mode().use_blink_planner().build()
+t_env = TableEnvironment.create(settings)
 
+# write all the data to one file
+t_env.get_config().get_configuration().set_string("parallelism.default", "1")
 t_env.connect(FileSystem().path('/tmp/input')) \
     .with_format(OldCsv()
                  .field('word', DataTypes.STRING())) \

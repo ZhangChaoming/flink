@@ -1,6 +1,6 @@
 ---
 title: "DROP 语句"
-weight: 4
+weight: 5
 type: docs
 aliases:
   - /zh/dev/table/sql/drop.html
@@ -118,7 +118,7 @@ val tables = tableEnv.listTables()
 {{< tab "Python" >}}
 ```python
 settings = EnvironmentSettings.new_instance()...
-table_env = StreamTableEnvironment.create(env, settings)
+table_env = TableEnvironment.create(settings)
 
 # 字符串数组： ["Orders"]
 tables = table_env.listTables()

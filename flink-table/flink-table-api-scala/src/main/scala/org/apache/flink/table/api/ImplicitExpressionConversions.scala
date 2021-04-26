@@ -421,38 +421,58 @@ trait ImplicitExpressionConversions {
   }
 
   /**
-    * Returns the current SQL date in UTC time zone.
+    * Returns the current SQL date in local time zone,
+    * the return type of this expression is [[DataTypes.DATE]].
     */
   def currentDate(): Expression = {
     Expressions.currentDate()
   }
 
   /**
-    * Returns the current SQL time in UTC time zone.
+    * Returns the current SQL time in local time zone,
+    * the return type of this expression is [[DataTypes.TIME]].
     */
   def currentTime(): Expression = {
     Expressions.currentTime()
   }
 
   /**
-    * Returns the current SQL timestamp in UTC time zone.
+    * Returns the current SQL timestamp in local time zone,
+    * the return type of this expression is [[DataTypes.TIMESTAMP_LTZ()]].
     */
   def currentTimestamp(): Expression = {
     Expressions.currentTimestamp()
   }
 
   /**
-    * Returns the current SQL time in local time zone.
+    * Returns the current SQL time in local time zone,
+    * the return type of this expression is [[DataTypes.TIME]],
+    * this is a synonym for [[ImplicitExpressionConversions.currentTime()]].
     */
   def localTime(): Expression = {
     Expressions.localTime()
   }
 
   /**
-    * Returns the current SQL timestamp in local time zone.
+    * Returns the current SQL timestamp in local time zone,
+    * the return type of this expression is [[DataTypes.TIMESTAMP]].
     */
   def localTimestamp(): Expression = {
     Expressions.localTimestamp()
+  }
+
+  /**
+   * Converts a numeric type epoch time to [[DataTypes#TIMESTAMP_LTZ]].
+   *
+   * <p>The supported precision is 0 or 3:
+   *
+   * <ul>
+   *   <li>0 means the numericEpochTime is in second.
+   *   <li>3 means the numericEpochTime is in millisecond.
+   * </ul>
+   */
+  def toTimestampLtz(numericEpochTime: Expression, precision: Expression): Expression = {
+    Expressions.toTimestampLtz(numericEpochTime, precision)
   }
 
   /**

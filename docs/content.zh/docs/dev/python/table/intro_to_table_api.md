@@ -38,11 +38,11 @@ Python Table API 程序的基本结构
 
 ```python
 
-from pyflink.table import EnvironmentSettings, StreamTableEnvironment
+from pyflink.table import EnvironmentSettings, TableEnvironment
 
 # 1. 创建 TableEnvironment
 env_settings = EnvironmentSettings.new_instance().in_streaming_mode().use_blink_planner().build()
-table_env = StreamTableEnvironment.create(environment_settings=env_settings) 
+table_env = TableEnvironment.create(env_settings) 
 
 # 2. 创建 source 表
 table_env.execute_sql("""
@@ -92,23 +92,15 @@ table_env.execute_sql("INSERT INTO print SELECT * FROM datagen").wait()
 
 ```python
 
-from pyflink.table import EnvironmentSettings, StreamTableEnvironment, BatchTableEnvironment
+from pyflink.table import EnvironmentSettings, TableEnvironment
 
-# 创建 blink 流 TableEnvironment
+# create a blink streaming TableEnvironment
 env_settings = EnvironmentSettings.new_instance().in_streaming_mode().use_blink_planner().build()
-table_env = StreamTableEnvironment.create(environment_settings=env_settings)
+table_env = TableEnvironment.create(env_settings)
 
-# 创建 blink 批 TableEnvironment
+# or create a blink batch TableEnvironment
 env_settings = EnvironmentSettings.new_instance().in_batch_mode().use_blink_planner().build()
-table_env = BatchTableEnvironment.create(environment_settings=env_settings)
-
-# 创建 flink 流 TableEnvironment
-env_settings = EnvironmentSettings.new_instance().in_streaming_mode().use_old_planner().build()
-table_env = StreamTableEnvironment.create(environment_settings=env_settings)
-
-# 创建 flink 批 TableEnvironment
-env_settings = EnvironmentSettings.new_instance().in_batch_mode().use_old_planner().build()
-table_env = BatchTableEnvironment.create(environment_settings=env_settings)
+table_env = TableEnvironment.create(env_settings)
 
 ```
 
@@ -144,10 +136,10 @@ table_env = BatchTableEnvironment.create(environment_settings=env_settings)
 ```python
 
 # 创建 blink 批 TableEnvironment
-from pyflink.table import EnvironmentSettings, BatchTableEnvironment
+from pyflink.table import EnvironmentSettings, TableEnvironment
 
 env_settings = EnvironmentSettings.new_instance().in_batch_mode().use_blink_planner().build()
-table_env = BatchTableEnvironment.create(environment_settings=env_settings)
+table_env = TableEnvironment.create(env_settings)
 
 table = table_env.from_elements([(1, 'Hi'), (2, 'Hello')])
 table.to_pandas()
@@ -213,10 +205,10 @@ print('Now the type of the "id" column is %s.' % type)
 
 ```python
 # 创建 blink 流 TableEnvironment
-from pyflink.table import EnvironmentSettings, StreamTableEnvironment
+from pyflink.table import EnvironmentSettings, TableEnvironment
 
 env_settings = EnvironmentSettings.new_instance().in_streaming_mode().use_blink_planner().build()
-table_env = StreamTableEnvironment.create(environment_settings=env_settings)
+table_env = TableEnvironment.create(env_settings)
 
 table_env.execute_sql("""
     CREATE TABLE random_source (
@@ -297,10 +289,10 @@ new_table.to_pandas()
 ```python
 
 # 通过 batch table environment 来执行查询
-from pyflink.table import EnvironmentSettings, BatchTableEnvironment
+from pyflink.table import EnvironmentSettings, TableEnvironment
 
 env_settings = EnvironmentSettings.new_instance().in_batch_mode().use_blink_planner().build()
-table_env = BatchTableEnvironment.create(environment_settings=env_settings)
+table_env = TableEnvironment.create(env_settings)
 
 orders = table_env.from_elements([('Jack', 'FRANCE', 10), ('Rose', 'ENGLAND', 30), ('Jack', 'FRANCE', 20)],
                                  ['name', 'country', 'revenue'])
@@ -323,6 +315,44 @@ revenue.to_pandas()
 0  Jack       30
 ```
 
+Table API 也支持 [行操作]({{< ref "docs/dev/table/tableapi" >}}#row-based-operations)的 API, 这些行操作包括 [Map Operation]({{< ref "docs/dev/table/tableapi" >}}#row-based-operations), 
+[FlatMap Operation]({{< ref "docs/dev/table/tableapi" >}}#flatmap), [Aggregate Operation]({{< ref "docs/dev/table/tableapi" >}}#aggregate) 和 [FlatAggregate Operation]({{< ref "docs/dev/table/tableapi" >}}#flataggregate).
+
+以下示例展示了一个简单的 Table API 基于行操作的查询
+
+```python
+
+# 通过 batch table environment 来执行查询
+from pyflink.table import EnvironmentSettings, TableEnvironment
+from pyflink.table import DataTypes
+from pyflink.table.udf import udf
+import pandas as pd
+
+env_settings = EnvironmentSettings.new_instance().in_batch_mode().use_blink_planner().build()
+table_env = TableEnvironment.create(env_settings)
+
+orders = table_env.from_elements([('Jack', 'FRANCE', 10), ('Rose', 'ENGLAND', 30), ('Jack', 'FRANCE', 20)],
+                                 ['name', 'country', 'revenue'])
+
+map_function = udf(lambda x: pd.concat([x.name, x.revenue * 10], axis=1),
+                    result_type=DataTypes.ROW(
+                                [DataTypes.FIELD("name", DataTypes.STRING()),
+                                 DataTypes.FIELD("revenue", DataTypes.BIGINT())]),
+                    func_type="pandas")
+
+orders.map(map_function).alias('name', 'revenue').to_pandas()
+
+```
+
+结果为：
+
+```text
+   name  revenue
+0  Jack      100
+1  Rose      300
+2  Jack      200
+```
+
 ### SQL 查询
 
 Flink 的 SQL 基于 [Apache Calcite](https://calcite.apache.org)，它实现了标准的 SQL。SQL 查询语句使用字符串来表达。
@@ -334,10 +364,10 @@ Flink 的 SQL 基于 [Apache Calcite](https://calcite.apache.org)，它实现了
 ```python
 
 # 通过 StreamTableEnvironment 来执行查询
-from pyflink.table import EnvironmentSettings, StreamTableEnvironment
+from pyflink.table import EnvironmentSettings, TableEnvironment
 
 env_settings = EnvironmentSettings.new_instance().in_streaming_mode().use_blink_planner().build()
-table_env = StreamTableEnvironment.create(environment_settings=env_settings)
+table_env = TableEnvironment.create(env_settings)
 
 
 table_env.execute_sql("""
@@ -606,11 +636,11 @@ Table API 提供了一种机制来查看 `Table` 的逻辑查询计划和优化�
 
 ```python
 
-# 使用 StreamTableEnvironment
-from pyflink.table import EnvironmentSettings, StreamTableEnvironment
+# 使用流模式 TableEnvironment
+from pyflink.table import EnvironmentSettings, TableEnvironment
 
 env_settings = EnvironmentSettings.new_instance().in_streaming_mode().use_blink_planner().build()
-table_env = StreamTableEnvironment.create(environment_settings=env_settings)
+table_env = TableEnvironment.create(env_settings)
 
 table1 = table_env.from_elements([(1, 'Hi'), (2, 'Hello')], ['id', 'data'])
 table2 = table_env.from_elements([(1, 'Hi'), (2, 'Hello')], ['id', 'data'])
@@ -661,11 +691,11 @@ Stage 136 : Data Source
 
 ```python
 
-# 使用 StreamTableEnvironment
-from pyflink.table import EnvironmentSettings, StreamTableEnvironment
+# 使用流模式 TableEnvironment
+from pyflink.table import EnvironmentSettings, TableEnvironment
 
 env_settings = EnvironmentSettings.new_instance().in_streaming_mode().use_blink_planner().build()
-table_env = StreamTableEnvironment.create(environment_settings=env_settings)
+table_env = TableEnvironment.create(environment_settings=env_settings)
 
 table1 = table_env.from_elements([(1, 'Hi'), (2, 'Hello')], ['id', 'data'])
 table2 = table_env.from_elements([(1, 'Hi'), (2, 'Hello')], ['id', 'data'])

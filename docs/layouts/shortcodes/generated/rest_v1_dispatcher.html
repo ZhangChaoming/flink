@@ -1468,6 +1468,9 @@ Using 'curl' you can upload a jar via 'curl -X POST -H "Expect:" -F "jarfile=@pa
     "jid" : {
       "type" : "any"
     },
+    "maxParallelism" : {
+      "type" : "integer"
+    },
     "name" : {
       "type" : "string"
     },
@@ -1511,6 +1514,9 @@ Using 'curl' you can upload a jar via 'curl -X POST -H "Expect:" -F "jarfile=@pa
           "id" : {
             "type" : "any"
           },
+          "maxParallelism" : {
+            "type" : "integer"
+          },
           "metrics" : {
             "type" : "object",
             "id" : "urn:jsonschema:org:apache:flink:runtime:rest:messages:job:metrics:IOMetricsInfo",
@@ -1552,7 +1558,7 @@ Using 'curl' you can upload a jar via 'curl -X POST -H "Expect:" -F "jarfile=@pa
           },
           "status" : {
             "type" : "string",
-            "enum" : [ "CREATED", "SCHEDULED", "DEPLOYING", "RUNNING", "FINISHED", "CANCELING", "CANCELED", "FAILED", "RECONCILING" ]
+            "enum" : [ "CREATED", "SCHEDULED", "DEPLOYING", "RUNNING", "FINISHED", "CANCELING", "CANCELED", "FAILED", "RECONCILING", "INITIALIZING" ]
           },
           "tasks" : {
             "type" : "object",
@@ -2624,7 +2630,7 @@ Using 'curl' you can upload a jar via 'curl -X POST -H "Expect:" -F "jarfile=@pa
       <td class="text-left">Response code: <code>200 OK</code></td>
     </tr>
     <tr>
-      <td colspan="2">Returns the non-recoverable exceptions that have been observed by the job. The truncated flag defines whether more exceptions occurred, but are not listed, because the response would otherwise get too big.</td>
+      <td colspan="2">Returns the most recent exceptions that have been handled by Flink for this job. The 'exceptionHistory.truncated' flag defines whether exceptions were filtered out through the GET parameter. The backend collects only a specific amount of most recent exceptions per job. This can be configured through web.exception-history-size in the Flink configuration. The following first-level members are deprecated: 'root-exception', 'timestamp', 'all-exceptions', and 'truncated'. Use the data provided through 'exceptionHistory', instead.</td>
     </tr>
     <tr>
       <td colspan="2">Path parameters</td>
@@ -2679,7 +2685,7 @@ Using 'curl' you can upload a jar via 'curl -X POST -H "Expect:" -F "jarfile=@pa
             <code>
 {
   "type" : "object",
-  "id" : "urn:jsonschema:org:apache:flink:runtime:rest:messages:JobExceptionsInfo",
+  "id" : "urn:jsonschema:org:apache:flink:runtime:rest:messages:JobExceptionsInfoWithHistory",
   "properties" : {
     "all-exceptions" : {
       "type" : "array",
@@ -2699,6 +2705,63 @@ Using 'curl' you can upload a jar via 'curl -X POST -H "Expect:" -F "jarfile=@pa
           "timestamp" : {
             "type" : "integer"
           }
+        }
+      }
+    },
+    "exceptionHistory" : {
+      "type" : "object",
+      "id" : "urn:jsonschema:org:apache:flink:runtime:rest:messages:JobExceptionsInfoWithHistory:JobExceptionHistory",
+      "properties" : {
+        "entries" : {
+          "type" : "array",
+          "items" : {
+            "type" : "object",
+            "id" : "urn:jsonschema:org:apache:flink:runtime:rest:messages:JobExceptionsInfoWithHistory:RootExceptionInfo",
+            "properties" : {
+              "concurrentExceptions" : {
+                "type" : "array",
+                "items" : {
+                  "type" : "object",
+                  "id" : "urn:jsonschema:org:apache:flink:runtime:rest:messages:JobExceptionsInfoWithHistory:ExceptionInfo",
+                  "properties" : {
+                    "exceptionName" : {
+                      "type" : "string"
+                    },
+                    "location" : {
+                      "type" : "string"
+                    },
+                    "stacktrace" : {
+                      "type" : "string"
+                    },
+                    "taskName" : {
+                      "type" : "string"
+                    },
+                    "timestamp" : {
+                      "type" : "integer"
+                    }
+                  }
+                }
+              },
+              "exceptionName" : {
+                "type" : "string"
+              },
+              "location" : {
+                "type" : "string"
+              },
+              "stacktrace" : {
+                "type" : "string"
+              },
+              "taskName" : {
+                "type" : "string"
+              },
+              "timestamp" : {
+                "type" : "integer"
+              }
+            }
+          }
+        },
+        "truncated" : {
+          "type" : "boolean"
         }
       }
     },
@@ -3429,6 +3492,9 @@ Using 'curl' you can upload a jar via 'curl -X POST -H "Expect:" -F "jarfile=@pa
     "id" : {
       "type" : "any"
     },
+    "maxParallelism" : {
+      "type" : "integer"
+    },
     "name" : {
       "type" : "string"
     },
@@ -3494,7 +3560,7 @@ Using 'curl' you can upload a jar via 'curl -X POST -H "Expect:" -F "jarfile=@pa
           },
           "status" : {
             "type" : "string",
-            "enum" : [ "CREATED", "SCHEDULED", "DEPLOYING", "RUNNING", "FINISHED", "CANCELING", "CANCELED", "FAILED", "RECONCILING" ]
+            "enum" : [ "CREATED", "SCHEDULED", "DEPLOYING", "RUNNING", "FINISHED", "CANCELING", "CANCELED", "FAILED", "RECONCILING", "INITIALIZING" ]
           },
           "subtask" : {
             "type" : "integer"
@@ -4079,7 +4145,7 @@ Using 'curl' you can upload a jar via 'curl -X POST -H "Expect:" -F "jarfile=@pa
     },
     "status" : {
       "type" : "string",
-      "enum" : [ "CREATED", "SCHEDULED", "DEPLOYING", "RUNNING", "FINISHED", "CANCELING", "CANCELED", "FAILED", "RECONCILING" ]
+      "enum" : [ "CREATED", "SCHEDULED", "DEPLOYING", "RUNNING", "FINISHED", "CANCELING", "CANCELED", "FAILED", "RECONCILING", "INITIALIZING" ]
     },
     "subtask" : {
       "type" : "integer"
@@ -4207,7 +4273,7 @@ Using 'curl' you can upload a jar via 'curl -X POST -H "Expect:" -F "jarfile=@pa
     },
     "status" : {
       "type" : "string",
-      "enum" : [ "CREATED", "SCHEDULED", "DEPLOYING", "RUNNING", "FINISHED", "CANCELING", "CANCELED", "FAILED", "RECONCILING" ]
+      "enum" : [ "CREATED", "SCHEDULED", "DEPLOYING", "RUNNING", "FINISHED", "CANCELING", "CANCELED", "FAILED", "RECONCILING", "INITIALIZING" ]
     },
     "subtask" : {
       "type" : "integer"
@@ -4616,7 +4682,7 @@ Using 'curl' you can upload a jar via 'curl -X POST -H "Expect:" -F "jarfile=@pa
           },
           "status" : {
             "type" : "string",
-            "enum" : [ "CREATED", "SCHEDULED", "DEPLOYING", "RUNNING", "FINISHED", "CANCELING", "CANCELED", "FAILED", "RECONCILING" ]
+            "enum" : [ "CREATED", "SCHEDULED", "DEPLOYING", "RUNNING", "FINISHED", "CANCELING", "CANCELED", "FAILED", "RECONCILING", "INITIALIZING" ]
           },
           "status-counts" : {
             "type" : "object",
@@ -5239,6 +5305,22 @@ Using 'curl' you can upload a jar via 'curl -X POST -H "Expect:" -F "jarfile=@pa
   "type" : "object",
   "id" : "urn:jsonschema:org:apache:flink:runtime:rest:messages:taskmanager:TaskManagerDetailsInfo",
   "properties" : {
+    "allocatedSlots" : {
+      "type" : "array",
+      "items" : {
+        "type" : "object",
+        "id" : "urn:jsonschema:org:apache:flink:runtime:rest:messages:taskmanager:SlotInfo",
+        "properties" : {
+          "jobId" : {
+            "type" : "any"
+          },
+          "resource" : {
+            "type" : "object",
+            "$ref" : "urn:jsonschema:org:apache:flink:runtime:rest:messages:ResourceProfileInfo"
+          }
+        }
+      }
+    },
     "dataPort" : {
       "type" : "integer"
     },

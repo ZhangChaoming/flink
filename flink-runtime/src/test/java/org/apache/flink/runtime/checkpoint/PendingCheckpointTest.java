@@ -27,6 +27,7 @@ import org.apache.flink.runtime.checkpoint.CheckpointCoordinatorTestingUtils.Str
 import org.apache.flink.runtime.checkpoint.PendingCheckpoint.TaskAcknowledgeResult;
 import org.apache.flink.runtime.checkpoint.hooks.MasterHooks;
 import org.apache.flink.runtime.concurrent.Executors;
+import org.apache.flink.runtime.executiongraph.Execution;
 import org.apache.flink.runtime.executiongraph.ExecutionAttemptID;
 import org.apache.flink.runtime.executiongraph.ExecutionJobVertex;
 import org.apache.flink.runtime.executiongraph.ExecutionVertex;
@@ -56,7 +57,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
@@ -82,22 +82,30 @@ import static org.powermock.api.mockito.PowerMockito.when;
 /** Tests for the {@link PendingCheckpoint}. */
 public class PendingCheckpointTest {
 
-    private static final Map<ExecutionAttemptID, ExecutionVertex> ACK_TASKS = new HashMap<>();
+    private static final List<Execution> ACK_TASKS = new ArrayList<>();
     private static final List<ExecutionVertex> TASKS_TO_COMMIT = new ArrayList<>();
     private static final ExecutionAttemptID ATTEMPT_ID = new ExecutionAttemptID();
+
+    public static final OperatorID OPERATOR_ID = new OperatorID();
+
+    public static final int PARALLELISM = 1;
+
+    public static final int MAX_PARALLELISM = 128;
 
     static {
         ExecutionJobVertex jobVertex = mock(ExecutionJobVertex.class);
         when(jobVertex.getOperatorIDs())
-                .thenReturn(
-                        Collections.singletonList(
-                                OperatorIDPair.generatedIDOnly(new OperatorID())));
+                .thenReturn(Collections.singletonList(OperatorIDPair.generatedIDOnly(OPERATOR_ID)));
 
         ExecutionVertex vertex = mock(ExecutionVertex.class);
-        when(vertex.getMaxParallelism()).thenReturn(128);
-        when(vertex.getTotalNumberOfParallelSubtasks()).thenReturn(1);
+        when(vertex.getMaxParallelism()).thenReturn(MAX_PARALLELISM);
+        when(vertex.getTotalNumberOfParallelSubtasks()).thenReturn(PARALLELISM);
         when(vertex.getJobVertex()).thenReturn(jobVertex);
-        ACK_TASKS.put(ATTEMPT_ID, vertex);
+
+        Execution execution = mock(Execution.class);
+        when(execution.getAttemptId()).thenReturn(ATTEMPT_ID);
+        when(execution.getVertex()).thenReturn(vertex);
+        ACK_TASKS.add(execution);
         TASKS_TO_COMMIT.add(vertex);
     }
 
@@ -131,7 +139,7 @@ public class PendingCheckpointTest {
     @Test
     public void testSyncSavepointCannotBeSubsumed() throws Exception {
         // Forced checkpoints cannot be subsumed
-        CheckpointProperties forced = CheckpointProperties.forSyncSavepoint(true);
+        CheckpointProperties forced = CheckpointProperties.forSyncSavepoint(true, false);
         PendingCheckpoint pending = createPendingCheckpoint(forced);
         assertFalse(pending.canBeSubsumed());
 
@@ -338,7 +346,10 @@ public class PendingCheckpointTest {
                         CheckpointProperties.forCheckpoint(
                                 CheckpointRetentionPolicy.NEVER_RETAIN_AFTER_TERMINATION));
         pending.acknowledgeTask(ATTEMPT_ID, null, mock(CheckpointMetrics.class), null);
-        Assert.assertTrue(pending.getOperatorStates().isEmpty());
+        final OperatorState expectedState =
+                new OperatorState(OPERATOR_ID, PARALLELISM, MAX_PARALLELISM);
+        Assert.assertEquals(
+                Collections.singletonMap(OPERATOR_ID, expectedState), pending.getOperatorStates());
     }
 
     /**
@@ -492,7 +503,9 @@ public class PendingCheckpointTest {
         assertEquals(TaskAcknowledgeResult.SUCCESS, ack2);
         assertEquals(0, checkpoint.getNumberOfNonAcknowledgedOperatorCoordinators());
         assertTrue(checkpoint.isFullyAcknowledged());
-        assertThat(checkpoint.getOperatorStates().keySet(), Matchers.contains(coord1.operatorId()));
+        assertThat(
+                checkpoint.getOperatorStates().keySet(),
+                Matchers.containsInAnyOrder(OPERATOR_ID, coord1.operatorId(), coord2.operatorId()));
     }
 
     @Test
@@ -603,14 +616,19 @@ public class PendingCheckpointTest {
                         1024,
                         4096);
 
-        final Map<ExecutionAttemptID, ExecutionVertex> ackTasks = new HashMap<>(ACK_TASKS);
+        final List<Execution> ackTasks = new ArrayList<>(ACK_TASKS);
         final List<ExecutionVertex> tasksToCommit = new ArrayList<>(TASKS_TO_COMMIT);
 
         return new PendingCheckpoint(
                 new JobID(),
                 0,
                 1,
-                new CheckpointPlan(Collections.emptyList(), ackTasks, tasksToCommit),
+                new CheckpointPlan(
+                        Collections.emptyList(),
+                        ackTasks,
+                        tasksToCommit,
+                        Collections.emptyList(),
+                        Collections.emptyList()),
                 operatorCoordinators,
                 masterStateIdentifiers,
                 props,

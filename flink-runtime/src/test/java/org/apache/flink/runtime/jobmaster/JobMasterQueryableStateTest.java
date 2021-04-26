@@ -21,16 +21,17 @@ package org.apache.flink.runtime.jobmaster;
 import org.apache.flink.api.common.JobID;
 import org.apache.flink.api.common.JobStatus;
 import org.apache.flink.api.common.time.Time;
+import org.apache.flink.core.testutils.OneShotLatch;
 import org.apache.flink.queryablestate.KvStateID;
-import org.apache.flink.runtime.clusterframework.types.AllocationID;
-import org.apache.flink.runtime.clusterframework.types.ResourceProfile;
 import org.apache.flink.runtime.jobgraph.JobGraph;
+import org.apache.flink.runtime.jobgraph.JobGraphTestUtils;
 import org.apache.flink.runtime.jobgraph.JobType;
 import org.apache.flink.runtime.jobgraph.JobVertex;
 import org.apache.flink.runtime.jobgraph.JobVertexID;
 import org.apache.flink.runtime.jobgraph.tasks.AbstractInvokable;
 import org.apache.flink.runtime.jobmanager.scheduler.SlotSharingGroup;
 import org.apache.flink.runtime.jobmaster.utils.JobMasterBuilder;
+import org.apache.flink.runtime.messages.Acknowledge;
 import org.apache.flink.runtime.messages.FlinkJobNotFoundException;
 import org.apache.flink.runtime.query.KvStateLocation;
 import org.apache.flink.runtime.query.UnknownKvStateLocation;
@@ -39,9 +40,6 @@ import org.apache.flink.runtime.rpc.TestingRpcService;
 import org.apache.flink.runtime.state.KeyGroupRange;
 import org.apache.flink.runtime.taskexecutor.TaskExecutorGateway;
 import org.apache.flink.runtime.taskexecutor.TestingTaskExecutorGatewayBuilder;
-import org.apache.flink.runtime.taskexecutor.slot.SlotOffer;
-import org.apache.flink.runtime.taskmanager.LocalUnresolvedTaskManagerLocation;
-import org.apache.flink.runtime.taskmanager.UnresolvedTaskManagerLocation;
 import org.apache.flink.util.ExceptionUtils;
 import org.apache.flink.util.TestLogger;
 
@@ -53,10 +51,8 @@ import org.junit.Test;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.UnknownHostException;
-import java.util.Collection;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
-import java.util.stream.Collectors;
-import java.util.stream.IntStream;
 
 import static org.apache.flink.core.testutils.FlinkMatchers.containsCause;
 import static org.hamcrest.CoreMatchers.either;
@@ -95,7 +91,7 @@ public class JobMasterQueryableStateTest extends TestLogger {
         JOB_VERTEX_1.setSlotSharingGroup(slotSharingGroup);
         JOB_VERTEX_2.setSlotSharingGroup(slotSharingGroup);
 
-        JOB_GRAPH = new JobGraph(JOB_VERTEX_1, JOB_VERTEX_2);
+        JOB_GRAPH = JobGraphTestUtils.streamingJobGraph(JOB_VERTEX_1, JOB_VERTEX_2);
         JOB_GRAPH.setJobType(JobType.STREAMING);
     }
 
@@ -125,7 +121,7 @@ public class JobMasterQueryableStateTest extends TestLogger {
 
         final JobMasterGateway jobMasterGateway = jobMaster.getSelfGateway(JobMasterGateway.class);
 
-        registerSlotsRequiredForJobExecution(jobMasterGateway);
+        registerSlotsRequiredForJobExecution(jobMasterGateway, JOB_GRAPH.getJobID());
 
         try {
             // lookup location
@@ -149,7 +145,7 @@ public class JobMasterQueryableStateTest extends TestLogger {
 
         final JobMasterGateway jobMasterGateway = jobMaster.getSelfGateway(JobMasterGateway.class);
 
-        registerSlotsRequiredForJobExecution(jobMasterGateway);
+        registerSlotsRequiredForJobExecution(jobMasterGateway, JOB_GRAPH.getJobID());
 
         try {
             // lookup location
@@ -172,7 +168,7 @@ public class JobMasterQueryableStateTest extends TestLogger {
 
         final JobMasterGateway jobMasterGateway = jobMaster.getSelfGateway(JobMasterGateway.class);
 
-        registerSlotsRequiredForJobExecution(jobMasterGateway);
+        registerSlotsRequiredForJobExecution(jobMasterGateway, JOB_GRAPH.getJobID());
 
         try {
             // register an irrelevant KvState
@@ -195,7 +191,7 @@ public class JobMasterQueryableStateTest extends TestLogger {
 
         final JobMasterGateway jobMasterGateway = jobMaster.getSelfGateway(JobMasterGateway.class);
 
-        registerSlotsRequiredForJobExecution(jobMasterGateway);
+        registerSlotsRequiredForJobExecution(jobMasterGateway, JOB_GRAPH.getJobID());
 
         try {
             final String registrationName = "register-me";
@@ -240,7 +236,7 @@ public class JobMasterQueryableStateTest extends TestLogger {
 
         final JobMasterGateway jobMasterGateway = jobMaster.getSelfGateway(JobMasterGateway.class);
 
-        registerSlotsRequiredForJobExecution(jobMasterGateway);
+        registerSlotsRequiredForJobExecution(jobMasterGateway, JOB_GRAPH.getJobID());
 
         try {
             final String registrationName = "register-me";
@@ -288,7 +284,7 @@ public class JobMasterQueryableStateTest extends TestLogger {
 
         final JobMasterGateway jobMasterGateway = jobMaster.getSelfGateway(JobMasterGateway.class);
 
-        registerSlotsRequiredForJobExecution(jobMasterGateway);
+        registerSlotsRequiredForJobExecution(jobMasterGateway, JOB_GRAPH.getJobID());
 
         try {
             // duplicate registration fails task
@@ -318,35 +314,27 @@ public class JobMasterQueryableStateTest extends TestLogger {
         }
     }
 
-    private void registerSlotsRequiredForJobExecution(JobMasterGateway jobMasterGateway)
+    private static void registerSlotsRequiredForJobExecution(
+            JobMasterGateway jobMasterGateway, JobID jobId)
             throws ExecutionException, InterruptedException {
-
+        final OneShotLatch oneTaskSubmittedLatch = new OneShotLatch();
         final TaskExecutorGateway taskExecutorGateway =
-                new TestingTaskExecutorGatewayBuilder().createTestingTaskExecutorGateway();
-        final UnresolvedTaskManagerLocation unresolvedTaskManagerLocation =
-                new LocalUnresolvedTaskManagerLocation();
+                new TestingTaskExecutorGatewayBuilder()
+                        .setSubmitTaskConsumer(
+                                (taskDeploymentDescriptor, jobMasterId) -> {
+                                    oneTaskSubmittedLatch.trigger();
+                                    return CompletableFuture.completedFuture(Acknowledge.get());
+                                })
+                        .createTestingTaskExecutorGateway();
+        JobMasterTestUtils.registerTaskExecutorAndOfferSlots(
+                rpcService,
+                jobMasterGateway,
+                jobId,
+                PARALLELISM,
+                taskExecutorGateway,
+                testingTimeout);
 
-        rpcService.registerGateway(taskExecutorGateway.getAddress(), taskExecutorGateway);
-
-        jobMasterGateway
-                .registerTaskManager(
-                        taskExecutorGateway.getAddress(),
-                        unresolvedTaskManagerLocation,
-                        testingTimeout)
-                .get();
-
-        Collection<SlotOffer> slotOffers =
-                IntStream.range(0, PARALLELISM)
-                        .mapToObj(
-                                index ->
-                                        new SlotOffer(
-                                                new AllocationID(), index, ResourceProfile.ANY))
-                        .collect(Collectors.toList());
-
-        jobMasterGateway
-                .offerSlots(
-                        unresolvedTaskManagerLocation.getResourceID(), slotOffers, testingTimeout)
-                .get();
+        oneTaskSubmittedLatch.await();
     }
 
     private static void registerKvState(

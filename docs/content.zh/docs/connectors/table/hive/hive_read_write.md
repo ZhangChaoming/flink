@@ -91,7 +91,7 @@ of new files in the folder and read new files incrementally.
   </tbody>
 </table>
 
-[SQL Hints]({{< ref "docs/dev/table/sql/hints" >}}) can be used to apply configurations to a Hive table
+[SQL Hints]({{< ref "docs/dev/table/sql/queries/hints" >}}) can be used to apply configurations to a Hive table
 without changing its definition in the Hive metastore.
 
 ```sql
@@ -169,7 +169,7 @@ following parameters in `TableConfig` (note that these parameters affect all sou
 ## Temporal Table Join
 
 You can use a Hive table as a temporal table, and then a stream can correlate the Hive table by temporal join. 
-Please see [temporal join]({{< ref "docs/dev/table/concepts/joins" >}}#temporal-joins) for more information about the temporal join.
+Please see [temporal join]({{< ref "docs/dev/table/sql/queries/joins" >}}#temporal-joins) for more information about the temporal join.
 
 Flink supports processing-time temporal join Hive Table, the processing-time temporal join always joins the latest version of temporal table.
 Flink supports temporal join both partitioned table and Hive non-partitioned table, for partitioned table, Flink supports tracking the latest partition of Hive table automatically.
@@ -236,9 +236,9 @@ CREATE TABLE orders_table (
 -- streaming sql, kafka temporal join a hive dimension table. Flink will automatically reload data from the
 -- configured latest partition in the interval of 'streaming-source.monitor-interval'.
 
-SELECT * FROM orders_table AS order 
+SELECT * FROM orders_table AS o 
 JOIN dimension_table FOR SYSTEM_TIME AS OF o.proctime AS dim
-ON order.product_id = dim.product_id;
+ON o.product_id = dim.product_id;
 
 ```
 
@@ -303,9 +303,9 @@ CREATE TABLE orders_table (
 
 -- streaming sql, kafka join a hive dimension table. Flink will reload all data from dimension_table after cache ttl is expired.
 
-SELECT * FROM orders_table AS order 
+SELECT * FROM orders_table AS o 
 JOIN dimension_table FOR SYSTEM_TIME AS OF o.proctime AS dim
-ON order.product_id = dim.product_id;
+ON o.product_id = dim.product_id;
 
 ```
 Note: 

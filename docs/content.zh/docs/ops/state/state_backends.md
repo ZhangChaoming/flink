@@ -103,6 +103,8 @@ FsStateBackend 适用场景:
 *RocksDBStateBackend* 需要配置一个文件系统的 URL （类型、地址、路径），例如："hdfs://namenode:40010/flink/checkpoints" 或 "file:///data/flink/checkpoints"。
 
 RocksDBStateBackend 将正在运行中的状态数据保存在 [RocksDB](http://rocksdb.org) 数据库中，RocksDB 数据库默认将数据存储在 TaskManager 的数据目录。
+Unlike storing java objects in `HashMapStateBackend`, data is stored as serialized byte arrays, which are mainly defined by the type serializer, resulting in key comparisons being byte-wise instead of using Java's `hashCode()` and `equals()` methods.
+
 CheckPoint 时，整个 RocksDB 数据库被 checkpoint 到配置的文件系统目录中。
 少量的元数据信息存储到 JobManager 的内存中（高可用模式下，将其存储到 CheckPoint 的元数据文件中）。 
 
@@ -132,14 +134,17 @@ The total memory amount of RocksDB instance(s) per slot can also be bounded, ple
 
 # Choose The Right State Backend
 
-Currently, Flink's savepoint binary format is state backend specific.
-A savepoint taken with one state backend cannot be restored using another, and you should carefully consider which backend you use before going to production.
-
 In general, we recommend avoiding `MemoryStateBackend` in production because it stores its snapshots inside the JobManager as opposed to persistent disk.
 When deciding between `FsStateBackend` and `RocksDB`, it is a choice between performance and scalability.
 `FsStateBackend` is very fast as each state access and update operates on objects on the Java heap; however, state size is limited by available memory within the cluster.
 On the other hand, `RocksDB` can scale based on available disk space and is the only state backend to support incremental snapshots.
 However, each state access and update requires (de-)serialization and potentially reading from disk which leads to average performance that is an order of magnitude slower than the memory state backends.
+
+{{< hint info >}}
+In Flink 1.13 we unified the binary format of Flink's savepoints. That means you can take a savepoint and then restore from it using a different state backend.
+All the state backends produce a common format only starting from version 1.13. Therefore, if you want to switch the state backend you should first upgrade your Flink version then
+take a savepoint with the new version, and only after that you can restore it with a different state backend.
+{{< /hint >}}
 
 ## 设置 State Backend
 

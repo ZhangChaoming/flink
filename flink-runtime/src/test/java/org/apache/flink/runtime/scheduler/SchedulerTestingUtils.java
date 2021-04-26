@@ -190,7 +190,12 @@ public class SchedulerTestingUtils {
     public static Collection<ExecutionAttemptID> getAllCurrentExecutionAttempts(
             DefaultScheduler scheduler) {
         return StreamSupport.stream(
-                        scheduler.requestJob().getAllExecutionVertices().spliterator(), false)
+                        scheduler
+                                .requestJob()
+                                .getArchivedExecutionGraph()
+                                .getAllExecutionVertices()
+                                .spliterator(),
+                        false)
                 .map((vertex) -> vertex.getCurrentExecutionAttempt().getAttemptId())
                 .collect(Collectors.toList());
     }
@@ -205,10 +210,7 @@ public class SchedulerTestingUtils {
         final ExecutionAttemptID attemptID = getAttemptId(scheduler, jvid, subtask);
         scheduler.updateTaskExecutionState(
                 new TaskExecutionState(
-                        scheduler.getJobId(),
-                        attemptID,
-                        ExecutionState.FAILED,
-                        new Exception("test task failure")));
+                        attemptID, ExecutionState.FAILED, new Exception("test task failure")));
     }
 
     public static void canceledExecution(
@@ -216,35 +218,34 @@ public class SchedulerTestingUtils {
         final ExecutionAttemptID attemptID = getAttemptId(scheduler, jvid, subtask);
         scheduler.updateTaskExecutionState(
                 new TaskExecutionState(
-                        scheduler.getJobId(),
-                        attemptID,
-                        ExecutionState.CANCELED,
-                        new Exception("test task failure")));
+                        attemptID, ExecutionState.CANCELED, new Exception("test task failure")));
     }
 
-    public static void setExecutionToRunning(
-            DefaultScheduler scheduler, JobVertexID jvid, int subtask) {
+    public static void setExecutionToState(
+            ExecutionState executionState,
+            DefaultScheduler scheduler,
+            JobVertexID jvid,
+            int subtask) {
         final ExecutionAttemptID attemptID = getAttemptId(scheduler, jvid, subtask);
-        scheduler.updateTaskExecutionState(
-                new TaskExecutionState(scheduler.getJobId(), attemptID, ExecutionState.RUNNING));
+        scheduler.updateTaskExecutionState(new TaskExecutionState(attemptID, executionState));
     }
 
     public static void setAllExecutionsToRunning(final DefaultScheduler scheduler) {
-        final JobID jid = scheduler.getJobId();
         getAllCurrentExecutionAttempts(scheduler)
                 .forEach(
-                        (attemptId) ->
-                                scheduler.updateTaskExecutionState(
-                                        new TaskExecutionState(
-                                                jid, attemptId, ExecutionState.RUNNING)));
+                        (attemptId) -> {
+                            scheduler.updateTaskExecutionState(
+                                    new TaskExecutionState(attemptId, ExecutionState.INITIALIZING));
+                            scheduler.updateTaskExecutionState(
+                                    new TaskExecutionState(attemptId, ExecutionState.RUNNING));
+                        });
     }
 
     public static void setAllExecutionsToCancelled(final DefaultScheduler scheduler) {
-        final JobID jid = scheduler.getJobId();
         for (final ExecutionAttemptID attemptId : getAllCurrentExecutionAttempts(scheduler)) {
             final boolean setToRunning =
                     scheduler.updateTaskExecutionState(
-                            new TaskExecutionState(jid, attemptId, ExecutionState.CANCELED));
+                            new TaskExecutionState(attemptId, ExecutionState.CANCELED));
 
             assertTrue("could not switch task to RUNNING", setToRunning);
         }
@@ -527,31 +528,39 @@ public class SchedulerTestingUtils {
         }
 
         public DefaultScheduler build() throws Exception {
+            final ExecutionGraphFactory executionGraphFactory =
+                    new DefaultExecutionGraphFactory(
+                            jobMasterConfiguration,
+                            userCodeLoader,
+                            new DefaultExecutionDeploymentTracker(),
+                            futureExecutor,
+                            ioExecutor,
+                            rpcTimeout,
+                            jobManagerJobMetricGroup,
+                            blobWriter,
+                            shuffleMaster,
+                            partitionTracker);
+
             return new DefaultScheduler(
                     log,
                     jobGraph,
                     ioExecutor,
                     jobMasterConfiguration,
                     componentMainThreadExecutor -> {},
-                    futureExecutor,
                     delayExecutor,
                     userCodeLoader,
                     checkpointRecoveryFactory,
-                    rpcTimeout,
-                    blobWriter,
                     jobManagerJobMetricGroup,
-                    shuffleMaster,
-                    partitionTracker,
                     schedulingStrategyFactory,
                     failoverStrategyFactory,
                     restartBackoffTimeStrategy,
                     executionVertexOperations,
                     executionVertexVersioner,
                     executionSlotAllocatorFactory,
-                    new DefaultExecutionDeploymentTracker(),
                     System.currentTimeMillis(),
                     mainThreadExecutor,
-                    jobStatusListener);
+                    jobStatusListener,
+                    executionGraphFactory);
         }
     }
 }

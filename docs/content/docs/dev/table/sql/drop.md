@@ -1,6 +1,6 @@
 ---
 title: "DROP Statements"
-weight: 4
+weight: 5
 type: docs
 aliases:
   - /dev/table/sql/drop.html
@@ -110,7 +110,7 @@ val tables = tableEnv.listTables()
 {{< tab "Python" >}}
 ```python
 settings = EnvironmentSettings.new_instance()...
-table_env = StreamTableEnvironment.create(env, settings)
+table_env = TableEnvironment.create(settings)
 
 # a string array: ["Orders"]
 tables = table_env.list_tables()
@@ -144,10 +144,14 @@ Flink SQL> SHOW TABLES;
 ## DROP TABLE
 
 ```sql
-DROP TABLE [IF EXISTS] [catalog_name.][db_name.]table_name
+DROP [TEMPORARY] TABLE [IF EXISTS] [catalog_name.][db_name.]table_name
 ```
 
 Drop a table with the given table name. If the table to drop does not exist, an exception is thrown.
+
+**TEMPORARY**
+
+Drop temporary table that has catalog and database namespaces.
 
 **IF EXISTS**
 

@@ -1,6 +1,6 @@
 ---
 title: "INSERT 语句"
-weight: 6
+weight: 7
 type: docs
 aliases:
   - /zh/dev/table/sql/insert.html
@@ -135,7 +135,7 @@ println(tableResult1.getJobClient().get().getJobStatus())
 {{< tab "Python" >}}
 ```python
 settings = EnvironmentSettings.new_instance()...
-table_env = StreamTableEnvironment.create(env, settings)
+table_env = TableEnvironment.create(settings)
 
 # 注册一个 "Orders" 源表，和 "RubberOrders" 结果表
 table_env.executeSql("CREATE TABLE Orders (`user` BIGINT, product STRING, amount INT) WITH (...)")

@@ -1,6 +1,6 @@
 ---
 title: "ALTER Statements"
-weight: 5
+weight: 6
 type: docs
 aliases:
   - /dev/table/sql/alter.html
@@ -109,7 +109,7 @@ val tables = tableEnv.listTables()
 {{< tab "Python" >}}
 ```python
 settings = EnvironmentSettings.new_instance()...
-table_env = StreamTableEnvironment.create(env, settings)
+table_env = TableEnvironment.create(settings)
 
 # a string array: ["Orders"]
 tables = table_env.list_tables()

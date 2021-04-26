@@ -352,7 +352,7 @@ class MyMapper extends RichMapFunction[Long,Long] {
 {{< /tab >}}
 {{< /tabs >}}
 
-Flink offers a {% gh_link flink-metrics/flink-metrics-dropwizard/src/main/java/org/apache/flink/dropwizard/metrics/DropwizardMeterWrapper.java "Wrapper" %} that allows usage of Codahale/DropWizard meters.
+Flink offers a {{< gh_link file="flink-metrics/flink-metrics-dropwizard/src/main/java/org/apache/flink/dropwizard/metrics/DropwizardMeterWrapper.java" name="Wrapper" >}} that allows usage of Codahale/DropWizard meters.
 To use this wrapper add the following dependency in your `pom.xml`:
 ```xml
 <dependency>
@@ -1051,6 +1051,11 @@ Metrics related to data exchange between task executors using netty network comm
 </table>
 
 ### Availability
+
+{{< hint warning >}}
+If [Reactive Mode]({{< ref "docs/deployment/elastic_scaling" >}}#reactive-mode) is enabled then these metrics, except `numRestarts`, do not work correctly.
+{{< /hint >}}
+
 <table class="table table-bordered">
   <thead>
     <tr>
@@ -1097,6 +1102,11 @@ Metrics related to data exchange between task executors using netty network comm
 </table>
 
 ### Checkpointing
+
+{{< hint warning >}}
+If [Reactive Mode]({{< ref "docs/deployment/elastic_scaling" >}}#reactive-mode) is enabled then checkpointing metrics with the `Job` scope do not work correctly.
+{{< /hint >}}
+
 Note that for failed checkpoints, metrics are updated on a best efforts basis and may be not accurate.
 <table class="table table-bordered">
   <thead>
@@ -1460,6 +1470,28 @@ Certain RocksDB native metrics are available but disabled by default, you can fi
       <td>stream, shardId</td>
       <td>The bytes requested (2 Mbps / loopFrequencyHz) in a single call to getRecords.
       </td>
+      <td>Gauge</td>
+    </tr>
+  </tbody>
+</table>
+
+#### HBase Connectors
+<table class="table table-bordered">
+  <thead>
+    <tr>
+      <th class="text-left" style="width: 15%">Scope</th>
+      <th class="text-left" style="width: 18%">Metrics</th>
+      <th class="text-left" style="width: 18%">User Variables</th>
+      <th class="text-left" style="width: 39%">Description</th>
+      <th class="text-left" style="width: 10%">Type</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th rowspan="1">Operator</th>
+      <td>lookupCacheHitRate</td>
+      <td>n/a</td>
+      <td>Cache hit ratio for lookup.</td>
       <td>Gauge</td>
     </tr>
   </tbody>

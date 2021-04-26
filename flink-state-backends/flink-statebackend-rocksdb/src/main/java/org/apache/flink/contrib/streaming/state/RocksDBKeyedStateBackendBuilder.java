@@ -21,10 +21,11 @@ package org.apache.flink.contrib.streaming.state;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
-import org.apache.flink.contrib.streaming.state.restore.AbstractRocksDBRestoreOperation;
 import org.apache.flink.contrib.streaming.state.restore.RocksDBFullRestoreOperation;
+import org.apache.flink.contrib.streaming.state.restore.RocksDBHeapTimersFullRestoreOperation;
 import org.apache.flink.contrib.streaming.state.restore.RocksDBIncrementalRestoreOperation;
 import org.apache.flink.contrib.streaming.state.restore.RocksDBNoneRestoreOperation;
+import org.apache.flink.contrib.streaming.state.restore.RocksDBRestoreOperation;
 import org.apache.flink.contrib.streaming.state.restore.RocksDBRestoreResult;
 import org.apache.flink.contrib.streaming.state.snapshot.RocksDBSnapshotStrategyBase;
 import org.apache.flink.contrib.streaming.state.snapshot.RocksFullSnapshotStrategy;
@@ -45,8 +46,10 @@ import org.apache.flink.runtime.state.SerializedCompositeKeyBuilder;
 import org.apache.flink.runtime.state.StateHandleID;
 import org.apache.flink.runtime.state.StreamCompressionDecorator;
 import org.apache.flink.runtime.state.heap.HeapPriorityQueueSetFactory;
+import org.apache.flink.runtime.state.heap.HeapPriorityQueueSnapshotRestoreWrapper;
 import org.apache.flink.runtime.state.heap.InternalKeyContext;
 import org.apache.flink.runtime.state.heap.InternalKeyContextImpl;
+import org.apache.flink.runtime.state.metrics.LatencyTrackingStateConfig;
 import org.apache.flink.runtime.state.ttl.TtlTimeProvider;
 import org.apache.flink.util.FileUtils;
 import org.apache.flink.util.IOUtils;
@@ -88,7 +91,8 @@ public class RocksDBKeyedStateBackendBuilder<K> extends AbstractKeyedStateBacken
     /** String that identifies the operator that owns this backend. */
     private final String operatorIdentifier;
 
-    private final RocksDBStateBackend.PriorityQueueStateType priorityQueueStateType;
+    private final EmbeddedRocksDBStateBackend.PriorityQueueStateType priorityQueueStateType;
+
     /** The configuration of local recovery. */
     private final LocalRecoveryConfig localRecoveryConfig;
 
@@ -129,8 +133,9 @@ public class RocksDBKeyedStateBackendBuilder<K> extends AbstractKeyedStateBacken
             KeyGroupRange keyGroupRange,
             ExecutionConfig executionConfig,
             LocalRecoveryConfig localRecoveryConfig,
-            RocksDBStateBackend.PriorityQueueStateType priorityQueueStateType,
+            EmbeddedRocksDBStateBackend.PriorityQueueStateType priorityQueueStateType,
             TtlTimeProvider ttlTimeProvider,
+            LatencyTrackingStateConfig latencyTrackingStateConfig,
             MetricGroup metricGroup,
             @Nonnull Collection<KeyedStateHandle> stateHandles,
             StreamCompressionDecorator keyGroupCompressionDecorator,
@@ -144,6 +149,7 @@ public class RocksDBKeyedStateBackendBuilder<K> extends AbstractKeyedStateBacken
                 keyGroupRange,
                 executionConfig,
                 ttlTimeProvider,
+                latencyTrackingStateConfig,
                 stateHandles,
                 keyGroupCompressionDecorator,
                 cancelStreamRegistry);
@@ -176,8 +182,9 @@ public class RocksDBKeyedStateBackendBuilder<K> extends AbstractKeyedStateBacken
             KeyGroupRange keyGroupRange,
             ExecutionConfig executionConfig,
             LocalRecoveryConfig localRecoveryConfig,
-            RocksDBStateBackend.PriorityQueueStateType priorityQueueStateType,
+            EmbeddedRocksDBStateBackend.PriorityQueueStateType priorityQueueStateType,
             TtlTimeProvider ttlTimeProvider,
+            LatencyTrackingStateConfig latencyTrackingStateConfig,
             MetricGroup metricGroup,
             @Nonnull Collection<KeyedStateHandle> stateHandles,
             StreamCompressionDecorator keyGroupCompressionDecorator,
@@ -198,6 +205,7 @@ public class RocksDBKeyedStateBackendBuilder<K> extends AbstractKeyedStateBacken
                 localRecoveryConfig,
                 priorityQueueStateType,
                 ttlTimeProvider,
+                latencyTrackingStateConfig,
                 metricGroup,
                 stateHandles,
                 keyGroupCompressionDecorator,
@@ -249,19 +257,22 @@ public class RocksDBKeyedStateBackendBuilder<K> extends AbstractKeyedStateBacken
         CloseableRegistry cancelStreamRegistryForBackend = new CloseableRegistry();
         LinkedHashMap<String, RocksDBKeyedStateBackend.RocksDbKvStateInfo> kvStateInformation =
                 new LinkedHashMap<>();
+        LinkedHashMap<String, HeapPriorityQueueSnapshotRestoreWrapper<?>> registeredPQStates =
+                new LinkedHashMap<>();
         RocksDB db = null;
-        AbstractRocksDBRestoreOperation restoreOperation = null;
+        RocksDBRestoreOperation restoreOperation = null;
         RocksDbTtlCompactFiltersManager ttlCompactFiltersManager =
                 new RocksDbTtlCompactFiltersManager(ttlTimeProvider);
 
         ResourceGuard rocksDBResourceGuard = new ResourceGuard();
-        SnapshotStrategy<K> snapshotStrategy;
+        RocksDBSnapshotStrategyBase<K, ?> checkpointStrategy;
         PriorityQueueSetFactory priorityQueueFactory;
         SerializedCompositeKeyBuilder<K> sharedRocksKeyBuilder;
         // Number of bytes required to prefix the key groups.
         int keyGroupPrefixBytes =
                 CompositeKeySerializationUtils.computeRequiredBytesInKeyGroupPrefix(
                         numberOfKeyGroups);
+
         try {
             // Variables for snapshot strategy when incremental checkpoint is enabled
             UUID backendUID = UUID.randomUUID();
@@ -282,6 +293,7 @@ public class RocksDBKeyedStateBackendBuilder<K> extends AbstractKeyedStateBacken
                                 keyGroupPrefixBytes,
                                 cancelStreamRegistry,
                                 kvStateInformation,
+                                registeredPQStates,
                                 ttlCompactFiltersManager);
                 RocksDBRestoreResult restoreResult = restoreOperation.restore();
                 db = restoreResult.getDb();
@@ -297,6 +309,7 @@ public class RocksDBKeyedStateBackendBuilder<K> extends AbstractKeyedStateBacken
             writeBatchWrapper =
                     new RocksDBWriteBatchWrapper(
                             db, optionsContainer.getWriteOptions(), writeBatchSize);
+
             // it is important that we only create the key builder after the restore, and not
             // before;
             // restore operations may reconfigure the key serializer, so accessing the key
@@ -308,11 +321,12 @@ public class RocksDBKeyedStateBackendBuilder<K> extends AbstractKeyedStateBacken
                             keyGroupPrefixBytes,
                             32);
             // init snapshot strategy after db is assured to be initialized
-            snapshotStrategy =
+            checkpointStrategy =
                     initializeSavepointAndCheckpointStrategies(
                             cancelStreamRegistryForBackend,
                             rocksDBResourceGuard,
                             kvStateInformation,
+                            registeredPQStates,
                             keyGroupPrefixBytes,
                             db,
                             backendUID,
@@ -375,14 +389,15 @@ public class RocksDBKeyedStateBackendBuilder<K> extends AbstractKeyedStateBacken
                 this.keySerializerProvider.currentSchemaSerializer(),
                 this.executionConfig,
                 this.ttlTimeProvider,
+                latencyTrackingStateConfig,
                 db,
                 kvStateInformation,
+                registeredPQStates,
                 keyGroupPrefixBytes,
                 cancelStreamRegistryForBackend,
                 this.keyGroupCompressionDecorator,
                 rocksDBResourceGuard,
-                snapshotStrategy.checkpointSnapshotStrategy,
-                snapshotStrategy.savepointSnapshotStrategy,
+                checkpointStrategy,
                 writeBatchWrapper,
                 defaultColumnFamilyHandle,
                 nativeMetricMonitor,
@@ -393,28 +408,21 @@ public class RocksDBKeyedStateBackendBuilder<K> extends AbstractKeyedStateBacken
                 writeBatchSize);
     }
 
-    private AbstractRocksDBRestoreOperation<K> getRocksDBRestoreOperation(
+    private RocksDBRestoreOperation getRocksDBRestoreOperation(
             int keyGroupPrefixBytes,
             CloseableRegistry cancelStreamRegistry,
             LinkedHashMap<String, RocksDBKeyedStateBackend.RocksDbKvStateInfo> kvStateInformation,
+            LinkedHashMap<String, HeapPriorityQueueSnapshotRestoreWrapper<?>> registeredPQStates,
             RocksDbTtlCompactFiltersManager ttlCompactFiltersManager) {
         DBOptions dbOptions = optionsContainer.getDbOptions();
         if (restoreStateHandles.isEmpty()) {
             return new RocksDBNoneRestoreOperation<>(
-                    keyGroupRange,
-                    keyGroupPrefixBytes,
-                    numberOfTransferingThreads,
-                    cancelStreamRegistry,
-                    userCodeClassLoader,
                     kvStateInformation,
-                    keySerializerProvider,
-                    instanceBasePath,
                     instanceRocksDBPath,
                     dbOptions,
                     columnFamilyOptionsFactory,
                     nativeMetricOptions,
                     metricGroup,
-                    restoreStateHandles,
                     ttlCompactFiltersManager,
                     optionsContainer.getWriteBufferManagerCapacity());
         }
@@ -439,16 +447,31 @@ public class RocksDBKeyedStateBackendBuilder<K> extends AbstractKeyedStateBacken
                     ttlCompactFiltersManager,
                     writeBatchSize,
                     optionsContainer.getWriteBufferManagerCapacity());
+        } else if (priorityQueueStateType
+                == EmbeddedRocksDBStateBackend.PriorityQueueStateType.HEAP) {
+            return new RocksDBHeapTimersFullRestoreOperation<>(
+                    keyGroupRange,
+                    numberOfKeyGroups,
+                    userCodeClassLoader,
+                    kvStateInformation,
+                    registeredPQStates,
+                    createHeapQueueFactory(),
+                    keySerializerProvider,
+                    instanceRocksDBPath,
+                    dbOptions,
+                    columnFamilyOptionsFactory,
+                    nativeMetricOptions,
+                    metricGroup,
+                    restoreStateHandles,
+                    ttlCompactFiltersManager,
+                    writeBatchSize,
+                    optionsContainer.getWriteBufferManagerCapacity());
         } else {
             return new RocksDBFullRestoreOperation<>(
                     keyGroupRange,
-                    keyGroupPrefixBytes,
-                    numberOfTransferingThreads,
-                    cancelStreamRegistry,
                     userCodeClassLoader,
                     kvStateInformation,
                     keySerializerProvider,
-                    instanceBasePath,
                     instanceRocksDBPath,
                     dbOptions,
                     columnFamilyOptionsFactory,
@@ -461,29 +484,18 @@ public class RocksDBKeyedStateBackendBuilder<K> extends AbstractKeyedStateBacken
         }
     }
 
-    private SnapshotStrategy<K> initializeSavepointAndCheckpointStrategies(
+    private RocksDBSnapshotStrategyBase<K, ?> initializeSavepointAndCheckpointStrategies(
             CloseableRegistry cancelStreamRegistry,
             ResourceGuard rocksDBResourceGuard,
             LinkedHashMap<String, RocksDBKeyedStateBackend.RocksDbKvStateInfo> kvStateInformation,
+            LinkedHashMap<String, HeapPriorityQueueSnapshotRestoreWrapper<?>> registeredPQStates,
             int keyGroupPrefixBytes,
             RocksDB db,
             UUID backendUID,
             SortedMap<Long, Set<StateHandleID>> materializedSstFiles,
             long lastCompletedCheckpointId) {
-        RocksDBSnapshotStrategyBase<K, ?> savepointSnapshotStrategy =
-                new RocksFullSnapshotStrategy<>(
-                        db,
-                        rocksDBResourceGuard,
-                        keySerializerProvider.currentSchemaSerializer(),
-                        kvStateInformation,
-                        keyGroupRange,
-                        keyGroupPrefixBytes,
-                        localRecoveryConfig,
-                        keyGroupCompressionDecorator);
         RocksDBSnapshotStrategyBase<K, ?> checkpointSnapshotStrategy;
         if (enableIncrementalCheckpointing) {
-            // TODO eventually we might want to separate savepoint and snapshot strategy, i.e.
-            // having 2 strategies.
             checkpointSnapshotStrategy =
                     new RocksIncrementalSnapshotStrategy<>(
                             db,
@@ -500,9 +512,19 @@ public class RocksDBKeyedStateBackendBuilder<K> extends AbstractKeyedStateBacken
                             lastCompletedCheckpointId,
                             numberOfTransferingThreads);
         } else {
-            checkpointSnapshotStrategy = savepointSnapshotStrategy;
+            checkpointSnapshotStrategy =
+                    new RocksFullSnapshotStrategy<>(
+                            db,
+                            rocksDBResourceGuard,
+                            keySerializerProvider.currentSchemaSerializer(),
+                            kvStateInformation,
+                            registeredPQStates,
+                            keyGroupRange,
+                            keyGroupPrefixBytes,
+                            localRecoveryConfig,
+                            keyGroupCompressionDecorator);
         }
-        return new SnapshotStrategy<>(checkpointSnapshotStrategy, savepointSnapshotStrategy);
+        return checkpointSnapshotStrategy;
     }
 
     private PriorityQueueSetFactory initPriorityQueueFactory(
@@ -514,8 +536,7 @@ public class RocksDBKeyedStateBackendBuilder<K> extends AbstractKeyedStateBacken
         PriorityQueueSetFactory priorityQueueFactory;
         switch (priorityQueueStateType) {
             case HEAP:
-                priorityQueueFactory =
-                        new HeapPriorityQueueSetFactory(keyGroupRange, numberOfKeyGroups, 128);
+                priorityQueueFactory = createHeapQueueFactory();
                 break;
             case ROCKSDB:
                 priorityQueueFactory =
@@ -538,24 +559,16 @@ public class RocksDBKeyedStateBackendBuilder<K> extends AbstractKeyedStateBacken
         return priorityQueueFactory;
     }
 
+    private HeapPriorityQueueSetFactory createHeapQueueFactory() {
+        return new HeapPriorityQueueSetFactory(keyGroupRange, numberOfKeyGroups, 128);
+    }
+
     private void prepareDirectories() throws IOException {
         checkAndCreateDirectory(instanceBasePath);
         if (instanceRocksDBPath.exists()) {
             // Clear the base directory when the backend is created
             // in case something crashed and the backend never reached dispose()
             FileUtils.deleteDirectory(instanceBasePath);
-        }
-    }
-
-    static final class SnapshotStrategy<K> {
-        final RocksDBSnapshotStrategyBase<K, ?> checkpointSnapshotStrategy;
-        final RocksDBSnapshotStrategyBase<K, ?> savepointSnapshotStrategy;
-
-        SnapshotStrategy(
-                RocksDBSnapshotStrategyBase<K, ?> checkpointSnapshotStrategy,
-                RocksDBSnapshotStrategyBase<K, ?> savepointSnapshotStrategy) {
-            this.checkpointSnapshotStrategy = checkpointSnapshotStrategy;
-            this.savepointSnapshotStrategy = savepointSnapshotStrategy;
         }
     }
 }

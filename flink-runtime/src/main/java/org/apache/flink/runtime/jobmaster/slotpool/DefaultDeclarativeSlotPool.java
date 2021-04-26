@@ -212,7 +212,7 @@ public class DefaultDeclarativeSlotPool implements DeclarativeSlotPool {
         final Optional<ResourceProfile> match =
                 requirementMatcher.match(
                         slotOffer.getResourceProfile(),
-                        totalResourceRequirements.getResourcesWithCount(),
+                        totalResourceRequirements,
                         fulfilledResourceRequirements::getResourceCount);
 
         if (match.isPresent()) {
@@ -475,6 +475,11 @@ public class DefaultDeclarativeSlotPool implements DeclarativeSlotPool {
     @Override
     public Collection<? extends SlotInfo> getAllSlotsInformation() {
         return slotPool.getAllSlotsInformation();
+    }
+
+    @Override
+    public boolean containsFreeSlot(AllocationID allocationId) {
+        return slotPool.containsFreeSlot(allocationId);
     }
 
     @Override

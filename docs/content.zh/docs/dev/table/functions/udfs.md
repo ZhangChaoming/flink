@@ -302,7 +302,7 @@ public static class OverloadedFunction extends ScalarFunction {
   }
 
   // 定义嵌套数据类型
-  @DataTypeHint("ROW<s STRING, t TIMESTAMP(3) WITH LOCAL TIME ZONE>")
+  @DataTypeHint("ROW<s STRING, t TIMESTAMP_LTZ(3)>")
   public Row eval(int i) {
     return Row.of(String.valueOf(i), Instant.ofEpochSecond(i));
   }
@@ -339,7 +339,7 @@ class OverloadedFunction extends ScalarFunction {
   }
 
   // 定义嵌套数据类型
-  @DataTypeHint("ROW<s STRING, t TIMESTAMP(3) WITH LOCAL TIME ZONE>")
+  @DataTypeHint("ROW<s STRING, t TIMESTAMP_LTZ(3)>")
   def eval(Int i): Row = {
     Row.of(java.lang.String.valueOf(i), java.time.Instant.ofEpochSecond(i))
   }
@@ -524,7 +524,7 @@ public static class LiteralFunction extends ScalarFunction {
 {{< /tabs >}}
 
 For more examples of custom type inference, see also the `flink-examples-table` module with
-{% gh_link flink-examples/flink-examples-table/src/main/java/org/apache/flink/table/examples/java/functions/AdvancedFunctionsExample.java "advanced function implementation" %}.
+{{< gh_link file="flink-examples/flink-examples-table/src/main/java/org/apache/flink/table/examples/java/functions/AdvancedFunctionsExample.java" name="advanced function implementation" >}}.
 
 ### 运行时集成
 -------------------
